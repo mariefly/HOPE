@@ -1,0 +1,83 @@
+---
+Estimating Local Protective Behavior in Denmark with dynamic MRP
+---
+
+The goal of this brief report is to introduce the HOPE project's efforts in estimating protective behavior at local levels in Denmark. 
+
+## The Data 
+
+We are relying on a series of (roughly) representative online surveys, which have been fielded in 15 waves between 2020 April 20 and 2020 May 15. The total sample size is N = 4,741. For practical reasons (see below), our analysis includes only respondents between 20 and 69 years old. 
+
+Our dependent variables are: 
+
+- **contact_family**: Number of physical contacts with non co-residing family members.^[Specifically, respondents are asked to remember "how many people they have been physically close to in the past 24 hours. Physically close is understood here as closer than 2 meters for at least 2 minutes."] 
+- **contact_friends**: Number of physical contacts with friends. 
+- **contact_colleagues**: Number of physical contacts with colleagues.
+- **contact_strengers**: Number of physical contacts with stranger.
+- **sum_contact_nohome**: Total number of non-home contacts - the sum of the four contact variables.
+- **over10**: A dummy whether the respondent was in a room with more than 10 people the day before.
+- **bchange**: A four point continuous scale tapping into behaviour change to avoid spreading infection.
+- **handwash**: Number of times respondent washed their hands or used hand sanitizer in the previous 24 hours. 
+
+## The Method: MRP -- Multilevel Regression with Post-stratification. 
+
+MRP has been developed as a technique to estimate attitudes on subnational level relying on data from national public opinion surveys. In recent years, it has been validated as a tool for generating reliable and valid subnational estimates of public opinion, which is superior to most naive alternatives (e.g. slicing up data). In a nutshell. MRP relies on both demographic and geographic variables in the modeling process and employs partial pooling (to the extent warranted by the data) in order to improve estimates for smaller units. There many [excellent](https://en.wikipedia.org/wiki/Multilevel_regression_with_poststratification) and [intuitive](https://scholar.princeton.edu/sites/default/files/jkastellec/files/mrp_primer.pdf) introductions about MRP online, so we refrain from a general introduction here. Instead, we give a brief summary of the analytical steps we took. We implemented MRP relying on the *rstanarm* R library in a fully Bayesian framework. 
+
+### Stage 1 - Estimating individual level protective behavior with multilevel models
+
+First, we seek to build a model of individual level protective behavior. Our independent variables are the following: 
+
+- date_std: Days since median wave. Simple time smoother. (11 levels)
+- age_cat: 5year age categories from 20-24 ... to 65-69. (10 levels) 
+- female: participant sex. (2 levels)
+- edu_clean: Participant's highest level of education (8 levels)
+- region: Participant's place of residence (5 levels). 
+- round_date: Date of interview^[We take the date of the median respondent in each wave]. (11 levels)
+
+The R code for the full multilevel model is displayed below. Note that we add both date_std and date_std squared as a time smoother and that we model age conditional on gender. 
+
+Moreover, note that the type of regression is conditional on the DV. For count variables (contacts and handwashing) we run negative binomial regressions, for binary variables (avoid crowds of 10+) we run logistic regressions and for the continuous variable (level of behavior change) we run simple linear regression. 
+
+```{r, eval=FALSE}
+model <- stan_glmer(
+        DV ~ date_std + I(date_std^2) +
+                (1 | age_cat:female) +
+                (1 | edu_clean) +
+                (1 | region) +
+                (1 | round_date),
+        family = neg_binomial_2,
+        data = data_contacts,
+        seed = 3012,
+        iter = 2000,
+        control = list(adapt_delta = 0.99)
+)
+```
+
+We evaluate the performance of the models with K-fold cross-validation. These show that out-of-sample predictive performance is improved if the time-smoother is added to the model for every DV except for avoiding crowds of 10+, where it is therefore omitted. We explored more complex models for the non-home contacts variables and found that modeling region or age specific time trends does not improve model performance. 
+
+### Stage 2 - Simulation and Post-stratification
+
+As the multilevel model informs us about the 'effects' of various demographic factors, we can next simulate the outcome for every type of person in our model. In other words, we predict the expected outcome for every possible combination of age, sex, education, and region. ($10*2*8*5=800$). Next, we rely on census data from the [Statistics Denmark](https://www.statistikbanken.dk/statbank5a/default.asp?w=1440) to weigh the frequency of each type of respondent in each region.^[Because the publicly available census info is limited to 5 year age categories between 15 and 69, whereas our survey data consists of respondents between 18 and 99, we limit our analysis for ages between 20 and 69.] We repeat this procedure for every day in our data. (We assume population distribution does not change between our dates.) We then aggregate these for region $\times$ 10 year age groups and estimate 50% and 90% credible intervals based on the posterior distributions. 
+
+## Results
+
+The plots below show our main results: the level of protective behavior for every age group in every region for every date in our data. We omitted credible intervals, which would be highly overlapping given the limited variation by region.  
+
+![](https://github.com/mariefly/HOPE/raw/master/SumContact_RDA.jpg)
+![](https://github.com/mariefly/HOPE/raw/master/BehavChange_RDA.jpg)
+![](https://github.com/mariefly/HOPE/raw/master/AvoidCrowds_RDA.jpg)
+![](https://github.com/mariefly/HOPE/raw/master/Hand_RDA.jpg)
+
+## Limitations 
+
+- As it turns out, regional differences in these variables are small. Consequently, including the region variable into our models offers little improvement in Stage 1. Preliminary evidence shows that respondent municipality carries more information. Including this into our model is our next step. 
+- We have spent less time for model diagnostics for avoid crowds, behavior change, and handwashing than it would be ideal. Reassuringly, the models predictions resemble raw estimates, but most probably there is ample room for finetuning our models.
+- For some models, the models exhibited divergent transitions after warm-up. 
+
+### Contact
+
+If you have any comments about these models, please contact [Alexander Bor](mailto:alexander.bor@ps.au.dk).
+
+### Acknowledgements 
+
+We are grateful for help by Magnus Storm Rasmussen, Mathias Tromborg, and Gabor Simonovits.
